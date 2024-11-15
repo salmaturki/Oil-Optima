@@ -1,0 +1,328 @@
+#############################################################################
+# Logisitics
+
+read_graph = np.load('graph (1).npy',allow_pickle='TRUE').item()
+
+def parse_input(input_dict):
+    graph = {}
+    for coord, neighbors in input_dict.items():
+        coord_tuple = tuple(map(float, coord.strip('[]').split(', ')))
+        neighbor_list = [(tuple(map(float, n.strip('[]').split(', '))), d) for n, d in neighbors.items()]
+        graph[coord_tuple] = neighbor_list
+    return graph
+
+def dijkstra_with_heuristic(graph, start, goal):
+    """
+    Dijkstra's algorithm with heuristic estimates for geographical locations.
+
+    Args:
+    - graph: A dictionary representing the graph, where keys are nodes and values are lists of tuples (neighbor, distance).
+    - start: The starting node.
+    - goal: The goal node.
+
+    Returns:
+    - path: A list representing the shortest path from start to goal.
+    - total_distance: The total distance of the shortest path.
+    """
+    # Heuristic function (Euclidean distance)
+    def heuristic(node):
+        x1, y1 = node[1:-1].split(',')
+        x2, y2 = goal[1:-1].split(',')
+        return haversine_distance(float(x1), float(y1), float(x2), float(y2))
+
+    # Priority queue for frontier nodes
+    frontier = [(0, start)]  # (distance, node)
+    # Dictionary to store the shortest distances from start to each node
+    shortest_distances = {node: inf for node in graph}
+    shortest_distances[start] = 0
+    # Dictionary to store the previous node in the shortest path
+    previous_node = {node: None for node in graph}
+
+    while frontier:
+        # Pop node from the frontier with the smallest distance
+        current_distance, current_node = heapq.heappop(frontier)
+
+        # Check if we reached the goal
+        if current_node == goal:
+            # Reconstruct the path from start to goal
+            path = []
+            while current_node is not None:
+                path.insert(0, current_node)
+                current_node = previous_node[current_node]
+            return path, shortest_distances[goal]
+
+        # Explore neighbors of the current node
+        for neighbor, distance in graph[current_node].items():
+            # Calculate the total distance to the neighbor
+            total_distance = current_distance + distance
+            # Update the shortest distance if we found a shorter path
+            if total_distance < shortest_distances[neighbor]:
+                shortest_distances[neighbor] = total_distance
+                # Update the previous node in the shortest path
+                previous_node[neighbor] = current_node
+                # Add the neighbor to the frontier with priority based on heuristic estimate
+                heapq.heappush(frontier, (total_distance + heuristic(neighbor), neighbor))
+
+    # If no path is found
+    return [], inf
+
+def dijkstra(graph, start, end):
+    # Initialize distances to infinity for all nodes except the start node
+    distances = {node: float('inf') for node in graph}
+    distances[start] = 0
+    
+    # Priority queue to store nodes with their current shortest distance
+    priority_queue = {start: 0}  # Dictionary {node: distance}
+    
+    # Dictionary to store the previous node in the shortest path
+    previous = {node: None for node in graph}
+    
+    while priority_queue:
+        current_node = min(priority_queue, key=priority_queue.get)
+        del priority_queue[current_node]
+        
+        # If current node is the end node, reconstruct and return the shortest path
+        if current_node == end:
+            path = []
+            while current_node is not None:
+                path.append(current_node)
+                current_node = previous[current_node]
+            return path[::-1]  # Reverse the path to get it in the correct order
+        
+        # Otherwise, explore neighbors of the current node
+        for neighbor, weight in graph[current_node].items():
+            distance = distances[current_node] + weight
+            if distance < distances[neighbor]:
+                distances[neighbor] = distance
+                previous[neighbor] = current_node
+                priority_queue[neighbor] = distance
+    
+    # If no path is found
+    return None
+
+client_df = pd.read_csv('data/client_list.csv')
+if 'Unnamed: 0' in client_df.columns:
+    client_df.drop(['Unnamed: 0'],axis=1, inplace=True)
+
+
+pgs_megrin = [36.77151858775371, 9.938279939704579]
+pgs_bezert = [37.25320085241904, 9.778379857893148]
+pgs_sfax = [34.30501189276116, 10.064632038873942]
+
+all_terminals = [pgs_megrin, pgs_bezert, pgs_sfax]
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """
+    Calculate the great circle distance between two points 
+    on the earth (specified in decimal degrees)
+    """
+    # Convert decimal degrees to radians
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+
+    # Haversine formula
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    c = 2 * atan2(sqrt(a), sqrt(1-a))
+    # Radius of earth in kilometers. Use 3956 for miles
+    radius = 6371 
+    distance = radius * c
+
+    return distance
+
+
+
+@app.route('/Logisitics')
+def Logisitics():
+    
+    columns = client_df.columns
+    rows = client_df.values.tolist()
+    return render_template('Logisitics.html', columns=columns, rows=rows)
+
+
+@app.route('/selected_row/<int:index>')
+def get_selected_row(index):
+    selected_row = pd.DataFrame(client_df.iloc[index,:]).T
+    cols = selected_row.columns
+    one_row = selected_row.values.tolist()
+
+    x = one_row[0][1].split(',')[0][1:]
+    y = one_row[0][1].split(',')[1][:-1]
+
+    tmp = float('inf')
+    clostest_x = 0
+    clostest_y = 0
+
+    for terminal in all_terminals:
+        if haversine_distance(float(y), float(x), terminal[1], terminal[0]) < tmp:
+            tmp = haversine_distance(float(y), float(x), terminal[1], terminal[0])
+            clostest_x = terminal[0]
+            clostest_y = terminal[1]
+
+   
+    #print(read_dictionary['[11.3349, 32.3727]']) # displays "world"
+
+    return render_template('Logisitics.html', cols = cols, one_row = one_row , x=x, y=y, clostest_x=clostest_x, clostest_y=clostest_y)
+
+
+@app.route('/createpath/<float:long1>/<float:lat1>/<float:long2>/<float:lat2>/')
+def createpath(long1, lat1, long2, lat2):
+    # print(long1, lat1, long2, lat2)
+    start_node = '['+str(long1)+', '+str(lat1)+']'
+    end_node = '['+str(long2)+', '+str(lat2)+']'  
+
+    
+
+    #######################
+    reference_point = (long1, lat1) 
+
+    # Calculate distances from the reference point to each position
+    distances = [(haversine_distance(float(reference_point[0]), float(reference_point[1]), float(pos[1:-1].split(',')[1]), float(pos[1:-1].split(',')[0])), pos) for pos in list(read_graph.keys())]
+
+    # Sort the positions based on distances
+    sorted_positions = sorted(distances, key=lambda x: x[0])
+
+    sorted_nodes= []
+    for node in sorted_positions:
+        sorted_nodes.append(node[1])
+
+    start_node = sorted_nodes[0]
+    ###################################
+    reference_point = (long2, lat2) 
+
+    # Calculate distances from the reference point to each position
+    distances = [(haversine_distance(float(reference_point[0]), float(reference_point[1]), float(pos[1:-1].split(',')[1]), float(pos[1:-1].split(',')[0])), pos) for pos in list(read_graph.keys())]
+
+    # Sort the positions based on distances
+    sorted_positions = sorted(distances, key=lambda x: x[0])
+
+    sorted_nodes= []
+    for node in sorted_positions:
+        sorted_nodes.append(node[1])
+    
+    end_node = sorted_nodes[0]
+    ###############################
+   
+    paths = dijkstra(read_graph, start_node, end_node)
+    # print(paths)
+    return render_template('createpath.html', paths=paths)
+
+
+
+
+@app.route('/resume/<string:path>', methods=['POST'])
+def resume(path):
+    
+    description = [str(x) for x in request.form.values()]
+    vectorizer = CountVectorizer()
+    vectorizer.fit(description)
+    final_results = []
+    best_score = 0
+    best_driver = ""
+    for file in os.listdir(r"static/pdfs"):
+        image_path = r'static/pdfs/'+ file
+        if image_path[-3:] == 'pdf':
+            extracted_text = ''
+            with pdfplumber.open(image_path) as pdf:
+                for page in pdf.pages:
+                    text = page.extract_text()
+                    extracted_text += text
+            text = [description[0], extracted_text]
+            
+            X = vectorizer.transform(text)
+            if round(cosine_similarity(X)[0][1]*100,2) > best_score:
+                best_score = round(cosine_similarity(X)[0][1]*100,2)
+                best_driver = file
+    return render_template('resume.html',resume=best_driver, paths= ast.literal_eval(path))
+
+
+@app.route('/trailer_forecast', methods=['POST'])
+def trailer_forecast_upload():
+    if request.method == 'POST':
+        # check if the post request has the file part
+        if 'file' not in request.files:
+            flash('No file part')
+            return redirect(request.url)
+        file = request.files['file']
+        # if user does not select file, browser also
+        # submit an empty part without filename
+        if file.filename == '':
+            flash('No selected file')
+            return redirect(request.url)
+        if file:
+            # Read the Excel file
+            df = pd.read_excel(file)
+            if 'Unnamed: 0' in df.columns:
+                df.drop(['Unnamed: 0'],axis=1, inplace=True)
+
+            
+            if  not 'ENTER_TERMINAL' in df.columns or not 'USABLE_CAPACITY' in df.columns or not 'LAST_MODIFIED' in df.columns:
+                return render_template('trailer_forecast.html', safetly_stock_prediction=f"Wrong type of Data")
+
+
+            to_drop = []
+
+            for col in df.columns:
+                if df[col].isnull().sum() / df.shape[0] > .9:
+                    to_drop.append(col)
+
+            for col in df.columns:
+                if df[col].nunique() == 1:
+                    to_drop.append(col)
+            df.drop(to_drop, axis=1,inplace=True)
+
+            df = df.filter([ 'ENTER_TERMINAL', 'USABLE_CAPACITY', 'LAST_MODIFIED'])
+            df.dropna(inplace=True)
+
+            df['LAST_MODIFIED'] = df['LAST_MODIFIED'].dt.strftime('%y-%m-%d')
+            df.sort_values(by=['LAST_MODIFIED'], inplace=True)
+
+
+            df1 = df[df['ENTER_TERMINAL'] == 1]
+            df2 = df[df['ENTER_TERMINAL'] == 2]
+
+            df1 = df1.groupby(["LAST_MODIFIED"]).mean()
+            df1 = df1.reset_index()
+
+            window = 5
+            X = []
+            Y = []
+
+            for i in range(len(df1)-window-1):
+                x = df1.loc[i:i+window-1, 'USABLE_CAPACITY'].values
+                y = df1.loc[i+window, 'USABLE_CAPACITY']
+                X.append(x)
+                Y.append(y)
+            loaded_model = xg.Booster()
+            loaded_model.load_model("terminal1_model.json")
+
+            pred1 = loaded_model.predict(xg.DMatrix([X[-1]]))[0]
+
+
+            df2 = df2.groupby(["LAST_MODIFIED"]).mean()
+            df2 = df2.reset_index() 
+
+            window = 5
+            X = []
+            Y = []
+
+            for i in range(len(df2)-window-1):
+                x = df2.loc[i:i+window-1, 'USABLE_CAPACITY'].values
+                y = df2.loc[i+window, 'USABLE_CAPACITY']
+                X.append(x)
+                Y.append(y)
+                
+            loaded_model = xg.Booster()
+            loaded_model.load_model("terminal2_model.json")
+
+            pred2 = loaded_model.predict(xg.DMatrix([X[-1]]))[0]
+
+
+           
+    return render_template('trailer_forecast.html', pred1=pred1, pred2= pred2)
+
+@app.route('/trailer_forecast')
+def trailer_forecast():
+    return render_template('trailer_forecast.html')
+
+################################################################################################
